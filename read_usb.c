@@ -34,6 +34,7 @@
 
 // The log file to save the recorded data
 FILE *logFile;
+struct timespec ts;
 
 // Configure values if needed
 char portName[] = "/dev/ttyACM0";
@@ -62,7 +63,7 @@ bool checksumUBX(char *msg, int numBytes)
     ck_a = ck_a + msg[i];
     ck_b = ck_b + ck_a;
   }
-  if (ck_a == read_buf[numBytes - 2] && ck_b == read_buf[numBytes - 1])
+  if (ck_a == msg[numBytes - 2] && ck_b == msg[numBytes - 1])
     return true;
   else
     return false;
@@ -74,7 +75,7 @@ bool checksumUBX(char *msg, int numBytes)
 int parseNMEA(char *msg)
 {
   char nmeaClass[3];
-  strncpy(nmeaClass, read_buf + 3, 3);
+  strncpy(nmeaClass, msg + 3, 3);
   if (strcmp(nmeaClass, "GGA") == 0)
   {
   }
@@ -86,9 +87,9 @@ int parseNMEA(char *msg)
 /// @return 0 if message is parsed and logged correctly, 1 if the checksum is wrong, 2 if the message is not UBX-ESF-RAW
 int parseUBX(char *msg, int numBytes)
 {
-  uint8_t msg_class = read_buf[2];
-  uint8_t msg_type = read_buf[3];
-  uint16_t length = (uint16_t)read_buf[4] | ((uint16_t)read_buf[5] << 8);
+  uint8_t msg_class = msg[2];
+  uint8_t msg_type = msg[3];
+  uint16_t length = (uint16_t)msg[4] | ((uint16_t)msg[5] << 8);
 
   // Uncomment the line below to print the number of bytes, message class, type and length
   // printf("Read numBytes %d, class 0x%x, type 0x%x, length %d ", numBytes, msg_class, msg_type, length);
@@ -104,7 +105,7 @@ int parseUBX(char *msg, int numBytes)
     uint32_t time_tag = 0;
 
     if
-      ~(checksumUBX(msg, numBytes))
+      (~(checksumUBX(msg, numBytes)))
       {
         return 1;
       }
@@ -112,16 +113,16 @@ int parseUBX(char *msg, int numBytes)
     for (int i = 6 + 4; i < numBytes - 2; i += 8)
     {
       // Parse data
-      int32_t data = (int32_t)read_buf[i] | ((int32_t)read_buf[i + 1] << 8) | ((int32_t)read_buf[i + 2] << 16);
-      if (read_buf[i + 2] & 0x80)
+      int32_t data = (int32_t)msg[i] | ((int32_t)msg[i + 1] << 8) | ((int32_t)msg[i + 2] << 16);
+      if (msg[i + 2] & 0x80)
         data = data | 0xFF000000; // Add leading ones in case of a negative number
       double data_double = data;
 
       // Parse data type
-      uint8_t data_type = (uint8_t)read_buf[i + 3];
+      uint8_t data_type = (uint8_t)msg[i + 3];
 
       // Time tag is a counter that gets updated every 39 usec.
-      time_tag = (uint32_t)read_buf[i + 4] | ((uint32_t)read_buf[i + 5] << 8) | ((uint32_t)read_buf[i + 6] << 16) | ((uint32_t)read_buf[i + 7] << 24);
+      time_tag = (uint32_t)msg[i + 4] | ((uint32_t)msg[i + 5] << 8) | ((uint32_t)msg[i + 6] << 16) | ((uint32_t)msg[i + 7] << 24);
       time_tag = time_tag * 39.0 / 1000; // In msec
       switch (data_type)
       {
@@ -146,6 +147,7 @@ int parseUBX(char *msg, int numBytes)
       }
     }
     struct tm *utc_time = gmtime(&ts.tv_sec);
+    long msec = ts.tv_nsec / 1000000;
     // Uncomment if wanna print
     // printf("UTC Time: %04d-%02d-%02d %02d:%02d:%02d.%ld ",
     //      utc_time->tm_year + 1900, utc_time->tm_mon + 1, utc_time->tm_mday,
@@ -168,7 +170,6 @@ int main()
 
   // Create new termios struct, we call it 'tty' for convention
   struct termios tty;
-  struct timespec ts;
 
   // Introduce signal handler
   signal(SIGINT, handleSigint);
@@ -239,7 +240,6 @@ int main()
     // settings above, specifically VMIN and VTIME
     int numBytes = read(serialPort, &read_buf, sizeof(read_buf));
     clock_gettime(CLOCK_REALTIME, &ts);
-    long msec = ts.tv_nsec / 1000000;
 
     // n is the number of bytes read. n may be 0 if no bytes were received, and can also be -1 to signal an error.
     if (numBytes < 0)
@@ -254,7 +254,7 @@ int main()
     }
     else if (read_buf[0] == UBX_PREAMBLE_1 && read_buf[1] == UBX_PREAMBLE_2) // UBX messages start with these two bytes
     {
-      parseUBX(read_buf);
+      parseUBX(read_buf, numBytes);
     }
   }
   close(serialPort);
